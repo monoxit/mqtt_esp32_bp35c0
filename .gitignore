@@ -30,3 +30,7 @@
 *.exe
 *.out
 *.app
+
+# Credentials
+private.h
+credentials.h
