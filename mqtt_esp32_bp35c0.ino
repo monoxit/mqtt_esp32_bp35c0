@@ -396,7 +396,9 @@ void handleEchonetRes(){
               }else if(epc.equals("E1")){
                 String valStr = str.substring(indexEpc+4, indexEpc+4+2);
                 unsigned long val = strtoul(valStr.c_str(),NULL,16);
-                integralPowerFactor = integralPowerFactorTable[val];
+                if(val < sizeof(integralPowerFactorTable)){
+                  integralPowerFactor = integralPowerFactorTable[val];
+                }
                 Serial.println(integralPowerFactor);
               }else if(epc.equals("E8")){
                 String valStr = str.substring(indexEpc+4, indexEpc+4+4);
