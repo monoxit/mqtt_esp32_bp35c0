@@ -42,7 +42,7 @@ const uint16_t  resetWaitMillis = 3 * 1000; //[ms]
 const uint16_t  resTimeoutMillis = 15 * 1000; //応答タイムアウト[ms]
 const uint32_t  scanTimeoutMillis = 3 * 60 * 1000; //ステーションスキャンタイムアウト[ms]
 const uint32_t  immediatePowerInterval = 15 * 1000; //瞬時電力取得間隔[ms]
-const uint32_t  integralPowerInterval = 30 * 60 * 1000; //積算電力取得間隔[ms]
+const uint32_t  integralPowerInterval = 5 * 60 * 1000; //積算電力取得間隔[ms]
 const uint8_t   maxErrorNumber = 3;
 
 uint8_t   bp35c0State = 0;
@@ -407,6 +407,11 @@ void handleEchonetRes(){
                 val = strtol(valStr.c_str(),NULL,16);
                 currentImmediateCurrentT = val;
                 Serial.println(val);
+              }else if(epc.equals("E0")){
+                String valStr = str.substring(indexEpc+4, indexEpc+4+8);
+                unsigned long val = strtoul(valStr.c_str(),NULL,16);
+                currentIntegralPower = val;
+                Serial.println(val);
               }
               indexEpc = indexEpc + 4 + (pdc*2);
             }// for opc
@@ -524,7 +529,7 @@ void bp35c0Loop(){
         stateTransition(bp35c0State+1);
       }else if((unsigned long)(now - lastIntegralPowerMillis) > integralPowerInterval){
         lastIntegralPowerMillis = now;
-        sendEchonetReq(0xE1,0xEA);
+        sendEchonetReq(0xE1,0xE0);
         stateTransition(bp35c0State+1);
       }
       break;
