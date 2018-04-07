@@ -43,7 +43,7 @@ const uint16_t  resTimeoutMillis = 15 * 1000; //応答タイムアウト[ms]
 const uint32_t  scanTimeoutMillis = 3 * 60 * 1000; //ステーションスキャンタイムアウト[ms]
 const uint32_t  immediatePowerInterval = 15 * 1000; //瞬時電力取得間隔[ms]
 const uint32_t  integralPowerInterval = 30 * 60 * 1000; //積算電力取得間隔[ms]
-const uint32_t  wdogTimeout = 5 * 60 * 1000; //ウオッチドッグタイムアウト[ms]
+const uint8_t   maxErrorNumber = 3;
 
 uint8_t   bp35c0State = 0;
 
@@ -51,10 +51,9 @@ WiFiClientSecure espClient;
 PubSubClient client(espClient);
 unsigned long lastMsg = 0;
 unsigned long now;
-unsigned long lastStateChangeMillis;
+unsigned long reqMillis;
 unsigned long lastImmediatePowerMillis;
 unsigned long lastIntegralPowerMillis;
-unsigned long lastEchonetReqMillis;
 
 int32_t   lastImmediatePower=0x7FFFFFFD;
 int32_t   currentImmediatePower=0x7FFFFFFD;
@@ -236,13 +235,18 @@ void resetBp35c0Buffer(){
   while(Serial1.available()) Serial1.read();
 }
 
-void bp35c0Println(String str){
+void bp35c0SendCommand(String cmd, String data = ""){
   resetBp35c0Buffer();
-  Serial1.println(str);
+  if(data.length() > 0){
+    Serial1.print(cmd);
+    Serial1.println(data);
+  }else{
+    Serial1.println(cmd);    
+  }
+  reqMillis = now;
 }
 
 void stateTransition(int newState){
-  lastStateChangeMillis = now;
   if(bp35c0State < 18 && newState >= 18){
     client.publish(mqttStateTopic, "ON");
     ledDefaultState = LOW;
@@ -258,7 +262,7 @@ void stateTransition(int newState){
 void waitForResponse(String expectedStr){
   if(isResReceived(expectedStr)){
     stateTransition(bp35c0State+1);
-  }else if((unsigned long)(now - lastStateChangeMillis) > resTimeoutMillis){
+  }else if((unsigned long)(now - reqMillis) > resTimeoutMillis){
     Serial.println("ERROR: No response received... Reset BP35C0");
     stateTransition(0);
  }
@@ -272,7 +276,7 @@ void handleEpandesc(){
     if(str.indexOf("EPANDESC") != -1){
       // Found smartmeter!
       int offset = str.indexOf("Channel:");
-      errorCounter = 0;
+
       channel = str.substring(offset+8, offset+10);
       panid   = str.substring(offset+40, offset+44);
       addr    = str.substring(offset+53, offset+69);
@@ -285,9 +289,10 @@ void handleEpandesc(){
       Serial.print("Addr:");
       Serial.println(addr);
 
+      errorCounter=0;
       stateTransition(bp35c0State+1);
     }else error = true;
-  }else if((unsigned long)(now - lastStateChangeMillis) > scanTimeoutMillis){
+  }else if((unsigned long)(now - reqMillis) > scanTimeoutMillis){
     error = true;
   }
 
@@ -311,9 +316,11 @@ void handleIpv6addr(){
     //Got ipv6 addr.
     Serial.print("IPv6addr:");
     Serial.println(ipv6addr);
+    errorCounter=0;
     stateTransition(bp35c0State+1);
-  }else if((unsigned long)(now - lastStateChangeMillis) > resTimeoutMillis){
+  }else if((unsigned long)(now - reqMillis) > resTimeoutMillis){
     Serial.println("ERROR: Cannot get IPv6 Addr");
+    errorCounter++;
     stateTransition(bp35c0State-1);
   }
 }
@@ -339,7 +346,7 @@ void sendEchonetReq(uint8_t epc, uint8_t epc2=0xFF){
   snprintf(prefixStr, sizeof(prefixStr), " 0E1A 1 0 %04X ", dataSize);
   Serial1.print(prefixStr);//PORT:3610 SEC:1 SIDE:0 SIE:14
   Serial1.write(echonetReqData, dataSize);
-  lastEchonetReqMillis = now;
+  reqMillis = now;
 }
 
 void handleEchonetRes(){
@@ -406,14 +413,14 @@ void handleEchonetRes(){
           }// esv:A response
         }// seoj:Smartmeter
       }// Port:Echonet
+      errorCounter = 0;
       stateTransition(bp35c0State-1);
     }//UDP+CRLF
   }//UDP
 
-  if((unsigned long)(now - lastEchonetReqMillis) > resTimeoutMillis){
+  if((unsigned long)(now - reqMillis) > resTimeoutMillis){
     Serial.println("ERROR: No response from smartmeter");
-    Serial.println(bp35c0BufferCounter);
-    Serial.println(str);
+    errorCounter++;
     stateTransition(bp35c0State-1);
   }
 }
@@ -440,77 +447,66 @@ void bp35c0Loop(){
       digitalWrite(BP35C0ResetPin,LOW);
       delay(10);
       digitalWrite(BP35C0ResetPin,HIGH);
+      reqMillis = now;
       stateTransition(1);
       break;
     case 1:
-      if((unsigned long)(now - lastStateChangeMillis) > resetWaitMillis){
+      if((unsigned long)(now - reqMillis) > resetWaitMillis){
         Serial.println("Reset complete.");
         stateTransition(2);
       }
       break;
     case 2:
-      bp35c0Println("SKVER");
+      bp35c0SendCommand("SKVER");
       stateTransition(3);
       break;
     case 3: //SKVER sent and wait OK
       waitForResponse("OK");
       break;
     case 4:
-      resetBp35c0Buffer();
-      Serial1.print("SKSETPWD C ");
-      Serial1.println(BROUTE_PASSWORD);
+      bp35c0SendCommand("SKSETPWD C ", BROUTE_PASSWORD);
       stateTransition(5);
       break;
     case 5:
       waitForResponse("OK");
       break;
     case 6:
-      resetBp35c0Buffer();
-      Serial1.print("SKSETRBID ");
-      Serial1.println(BROUTE_ID);
+      bp35c0SendCommand("SKSETRBID ",BROUTE_ID);
       stateTransition(7);
       break;
     case 7:
       waitForResponse("OK");
       break;
     case 8:
-      bp35c0Println("SKSCAN 2 FFFFFFFF 9 0");
+      bp35c0SendCommand("SKSCAN 2 FFFFFFFF 9 0");
       stateTransition(9);
       break;
     case 9: //Scanning
       handleEpandesc();
       break;
     case 10:
-      resetBp35c0Buffer();
-      Serial1.print("SKLL64 ");
-      Serial1.println(addr);
+      bp35c0SendCommand("SKLL64 ",addr);
       stateTransition(11);
       break;
    case 11:
       handleIpv6addr();
       break;
    case 12:
-      resetBp35c0Buffer();
-      Serial1.print("SKSREG S2 ");
-      Serial1.println(channel);
+      bp35c0SendCommand("SKSREG S2 ",channel);
       stateTransition(13);
       break;
    case 13:
       waitForResponse("OK");
       break;
    case 14:
-      resetBp35c0Buffer();
-      Serial1.print("SKSREG S3 ");
-      Serial1.println(panid);
+      bp35c0SendCommand("SKSREG S3 ",panid);
       stateTransition(15);
       break;
    case 15:
       waitForResponse("OK");
       break;
    case 16:
-      resetBp35c0Buffer();
-      Serial1.print("SKJOIN ");
-      Serial1.println(ipv6addr);
+      bp35c0SendCommand("SKJOIN ",ipv6addr);
       stateTransition(17);
       break;
    case 17:
@@ -524,6 +520,7 @@ void bp35c0Loop(){
       if((unsigned long)(now - lastImmediatePowerMillis) > immediatePowerInterval){
         lastImmediatePowerMillis = now;
         sendEchonetReq(0xE7,0xE8);
+        reqMillis = now;
         stateTransition(bp35c0State+1);
       }else if((unsigned long)(now - lastIntegralPowerMillis) > integralPowerInterval){
         lastIntegralPowerMillis = now;
@@ -535,7 +532,10 @@ void bp35c0Loop(){
       handleEchonetRes();
       break;
   }
-  if((unsigned long)(now - lastStateChangeMillis) > wdogTimeout) stateTransition(0);
+  if(errorCounter > maxErrorNumber){
+    errorCounter = 0;
+    stateTransition(0);
+  }
 }
 
 void loop() {
