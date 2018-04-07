@@ -8,8 +8,8 @@
  * This software is released under the MIT License.
  * http://opensource.org/licenses/mit-license.php
  * 
- * BP35C0とESP32を使用した、瞬時電力、瞬時電流ならびに定時積算電力を取得し、MQTTでパブリッシュするサンプルスケッチ。
- * ノート：積算電力は定時積算電力を取得しているためパブリッシュ時点での積算電力でない。
+ * BP35C0とESP32を使用した、瞬時電力、瞬時電流ならびに積算電力を取得し、MQTTでパブリッシュするサンプルスケッチ。
+ * ノート：積算電力は正方向のみ。
  * 　　　　合成構成比ならびに有効桁数を考慮していない。
 */
 
